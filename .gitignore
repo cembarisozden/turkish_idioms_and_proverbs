@@ -1,0 +1,25 @@
+# Model artifacts and checkpoints
+artifacts/
+*.safetensors
+*.pt
+*.pth
+*.bin
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Data files (if too large)
+# data/
+# *.csv
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
