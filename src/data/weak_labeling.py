@@ -1,9 +1,10 @@
 """Weak labeling for distant supervision."""
 import random
 import pandas as pd
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 import logging
+import re
 
 from src.data.normalize_tr import normalize_turkish_text
 from src.config import NUM_POSITIVE_EXAMPLES, NUM_NEGATIVE_EXAMPLES
@@ -214,11 +215,164 @@ def generate_positive_examples(lexicon: Dict[str, Dict],
     
     return examples
 
+def extract_example_sentences_from_definition(definition: str) -> List[str]:
+    """Extract example sentences from definition field.
+    
+    CSV'deki definition alanında HTML formatında örnek cümleler var:
+    <i> 'Bunu başarmak için elinden geleni yapacaksın, dedi.' -</i>İ. O. Anar.
+    
+    Args:
+        definition: Definition string that may contain example sentences.
+        
+    Returns:
+        List of extracted example sentences.
+    """
+    if not definition or pd.isna(definition):
+        return []
+    
+    sentences = []
+    definition_str = str(definition)
+    
+    # Pattern 1: <i> 'cümle' -</i>Yazar. (en yaygın format)
+    # Örnek: <i> 'Bunu başarmak için elinden geleni yapacaksın, dedi.' -</i>İ. O. Anar.
+    pattern1 = r"<i>\s*['\"]([^'\"]+)['\"]\s*-</i>"
+    matches1 = re.findall(pattern1, definition_str, re.IGNORECASE | re.DOTALL)
+    sentences.extend(matches1)
+    
+    # Pattern 2: <i>cümle</i> (tırnak olmadan)
+    # Örnek: <i> Elinden geleni geri koma!</i>
+    pattern2 = r"<i>([^<]+)</i>"
+    matches2 = re.findall(pattern2, definition_str, re.IGNORECASE | re.DOTALL)
+    for match in matches2:
+        # Remove author names and dashes (format: "cümle -Yazar.")
+        cleaned = re.sub(r'\s*-\s*[A-ZİĞÜŞÇÖ][^.]*\.?\s*$', '', match.strip())
+        cleaned = re.sub(r"^['\"]|['\"]$", '', cleaned)  # Remove quotes
+        # Skip if it's already captured by pattern1 (contains quotes)
+        if "'" not in cleaned and '"' not in cleaned and cleaned and len(cleaned) > 10:
+            sentences.append(cleaned)
+    
+    # Pattern 3: 'cümle' format (without HTML)
+    pattern3 = r"['\"]([^'\"]{15,})['\"]"  # At least 15 chars
+    matches3 = re.findall(pattern3, definition_str)
+    sentences.extend(matches3)
+    
+    # Clean and filter sentences
+    cleaned_sentences = []
+    for sent in sentences:
+        sent = sent.strip()
+        # Remove common prefixes/suffixes
+        sent = re.sub(r'^[:\-]\s*', '', sent)
+        sent = re.sub(r'\s*[:\-]\s*$', '', sent)
+        # Minimum length and basic quality checks
+        if len(sent) >= 10 and len(sent) <= 200:
+            # Should contain Turkish characters or be meaningful
+            if any(char.isalpha() for char in sent):
+                cleaned_sentences.append(sent)
+    
+    return cleaned_sentences
+
+def generate_examples_from_csv_definitions(df: pd.DataFrame, 
+                                         expr_col: str, 
+                                         def_col: str) -> List[Dict]:
+    """Generate training examples from CSV definition field example sentences.
+    
+    Args:
+        df: DataFrame with expression and definition columns.
+        expr_col: Name of expression column.
+        def_col: Name of definition column.
+        
+    Returns:
+        List of dictionaries with text, label, expression, definition.
+    """
+    examples = []
+    total_extracted = 0
+    
+    for _, row in df.iterrows():
+        expr = str(row[expr_col]) if pd.notna(row[expr_col]) else ""
+        definition = str(row[def_col]) if pd.notna(row[def_col]) else ""
+        
+        if not expr or not definition:
+            continue
+        
+        # Extract example sentences from definition
+        example_sentences = extract_example_sentences_from_definition(definition)
+        
+        for example_sent in example_sentences:
+            # ✅ Daha esnek eşleşme: Normalize edilmiş versiyonları kontrol et
+            expr_normalized = normalize_turkish_text(expr)
+            sent_normalized = normalize_turkish_text(example_sent)
+            
+            # Eşleşme kontrolü: 
+            # 1. Orijinal deyim cümlede var mı?
+            # 2. Normalize edilmiş deyim normalize edilmiş cümlede var mı?
+            # 3. Değimin anahtar kelimeleri cümlede var mı? (daha esnek)
+            expr_words = set(expr_normalized.split())
+            sent_words = set(sent_normalized.split())
+            
+            # En az 2 kelime eşleşiyorsa veya tam eşleşme varsa kabul et
+            common_words = expr_words.intersection(sent_words)
+            word_match = len(common_words) >= min(2, len(expr_words) // 2)
+            
+            if (expr_normalized in sent_normalized or 
+                expr in example_sent or 
+                word_match):
+                examples.append({
+                    'text': example_sent,
+                    'label': 1,
+                    'expression': expr,
+                    'definition': definition
+                })
+                total_extracted += 1
+    
+    logger.info(f"Extracted {total_extracted} example sentences from CSV definitions")
+    return examples
+
+def augment_with_turkish_inflections(expr: str) -> List[str]:
+    """Generate Turkish inflected forms of an expression.
+    
+    Türkçe'de ekler çok önemli. Deyimler farklı çekimlerle kullanılabilir:
+    - "elinden geleni yaptı" (geçmiş zaman)
+    - "elinden geleni yapıyor" (şimdiki zaman)
+    - "elinden geleni yapmış" (miş'li geçmiş)
+    - "elinden geleni yapacak" (gelecek zaman)
+    
+    Args:
+        expr: Expression to inflect.
+        
+    Returns:
+        List of inflected forms.
+    """
+    inflected = [expr]  # Original
+    
+    # Eğer deyim bir fiil içeriyorsa, farklı çekimler dene
+    # Basit bir yaklaşım: son kelimeyi değiştir
+    
+    # Geçmiş zaman ekleri
+    past_suffixes = ['dı', 'di', 'du', 'dü', 'tı', 'ti', 'tu', 'tü']
+    # Şimdiki zaman ekleri
+    present_suffixes = ['yor', 'ıyor', 'iyor', 'uyor', 'üyor']
+    # Gelecek zaman ekleri
+    future_suffixes = ['acak', 'ecek']
+    # Miş'li geçmiş ekleri
+    misli_past_suffixes = ['mış', 'miş', 'muş', 'müş']
+    
+    # Basit bir yaklaşım: Eğer deyim "yapmak", "etmek" gibi fiillerle bitiyorsa
+    # Farklı çekimler oluştur
+    if expr.endswith('mak') or expr.endswith('mek'):
+        base = expr[:-3]  # Remove "mak/mek"
+        for suffix in past_suffixes[:2]:  # Sadece birkaç örnek
+            inflected.append(base + suffix)
+        for suffix in present_suffixes[:2]:
+            inflected.append(base + suffix)
+    
+    return list(set(inflected))  # Remove duplicates
+
 def generate_natural_positive_examples(lexicon: Dict[str, Dict],
                                       num_examples: int) -> List[Dict]:
     """✅ Generate positive examples using idioms in natural sentence contexts.
     
     Dataset'teki gerçek deyimleri doğal cümlelerde kullan.
+    Farklı çekim ekleri ile çeşitlilik sağla.
     
     Args:
         lexicon: Lexicon mapping normalized expressions to metadata.
@@ -235,7 +389,9 @@ def generate_natural_positive_examples(lexicon: Dict[str, Dict],
         return examples
     
     # Doğal cümle şablonları (deyimleri doğal bağlamda kullan)
+    # ✅ İYİLEŞTİRİLDİ: Deyimleri cümle içinde doğal kullanım şablonları eklendi
     natural_contexts = [
+        # Mevcut şablonlar (deyim tırnak içinde)
         "{EXPR} dedi ve herkes şaşırdı.",
         "O zaman {EXPR} demişti bana.",
         "Bu durumda {EXPR} demek gerekiyor.",
@@ -267,6 +423,37 @@ def generate_natural_positive_examples(lexicon: Dict[str, Dict],
         "Hava güzelken {EXPR} dedi ve dışarı çıktık.",
         "Kitap okurken {EXPR} aklıma geldi.",
         "Yürüyüş yaparken {EXPR} dedi arkadaşım.",
+        # ✅ YENİ: Deyimleri cümle içinde doğal kullanım şablonları
+        "İşi başarmak için {EXPR}.",
+        "O {EXPR} ve başarılı oldu.",
+        "Bu konuda {EXPR} gerekiyor.",
+        "Her zaman {EXPR} ve sonuç aldı.",
+        "Bunu yapmak için {EXPR}.",
+        "O kişi {EXPR} ve işi halletti.",
+        "Bu durumda {EXPR} şart.",
+        "Başarılı olmak için {EXPR}.",
+        "Sorunu çözmek için {EXPR}.",
+        "Hedefe ulaşmak için {EXPR}.",
+        "O {EXPR} çünkü çok istiyordu.",
+        "Bu işi yapmak için {EXPR} çünkü önemli.",
+        "Her zaman {EXPR} çünkü sorumluluk sahibi.",
+        "O {EXPR} ve herkes memnun oldu.",
+        "Bu projede {EXPR} gerekiyordu.",
+        "Başarı için {EXPR} şarttı.",
+        "O {EXPR} ve sonuç mükemmeldi.",
+        "İşleri halletmek için {EXPR}.",
+        "Hedeflere ulaşmak için {EXPR}.",
+        "Sorunları çözmek için {EXPR}.",
+        "Başarılı olmak istiyorsan {EXPR}.",
+        "O {EXPR} ve başardı.",
+        "Bu konuda {EXPR} lazım.",
+        "Her zaman {EXPR} ve iyi sonuç aldı.",
+        "Bunu yapabilmek için {EXPR}.",
+        "O kişi {EXPR} ve başarılı oldu.",
+        "Bu durumda {EXPR} gerekli.",
+        "Başarılı olmak istiyorsan {EXPR} şart.",
+        "Sorunları çözmek istiyorsan {EXPR}.",
+        "Hedeflere ulaşmak istiyorsan {EXPR}.",
     ]
     
     for _ in range(num_examples):
@@ -274,16 +461,28 @@ def generate_natural_positive_examples(lexicon: Dict[str, Dict],
         expr = random.choice(expressions)
         expr_original = lexicon[expr].get('original', expr)
         
+        # ✅ Ek çeşitliliği: Bazen farklı çekimler kullan
+        # %70 orijinal, %30 çekimli versiyon
+        if random.random() < 0.3:
+            inflected_forms = augment_with_turkish_inflections(expr_original)
+            expr_to_use = random.choice(inflected_forms)
+        else:
+            expr_to_use = expr_original
+        
         # Random natural context
         context = random.choice(natural_contexts)
         
         # Fill context
-        text = context.format(EXPR=expr_original)
+        try:
+            text = context.format(EXPR=expr_to_use)
+        except KeyError:
+            # Eğer şablon {EXPR} içermiyorsa, direkt kullan
+            text = expr_to_use
         
         examples.append({
             'text': text,
             'label': 1,
-            'expression': expr_original,
+            'expression': expr_original,  # Orijinal deyimi sakla
             'definition': lexicon[expr].get('definition', '')
         })
     

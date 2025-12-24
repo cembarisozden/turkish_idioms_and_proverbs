@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.load_dataset import load_and_prepare_dataset
 from src.data.normalize_tr import normalize_turkish_text
-from src.data.weak_labeling import generate_weak_labels
+from src.data.weak_labeling import generate_weak_labels, generate_examples_from_csv_definitions
 from src.data.build_splits import split_dataset
 from src.config import DATA_DIR, LEXICON_PATH, GENERATED_DATASET_PATH
 from src.utils.io import save_json, save_csv
@@ -73,14 +73,29 @@ def main():
     
     logger.info(f"Added {len(real_examples)} unique real examples from dataset")
     
+    # ✅ CSV'deki definition alanından örnek cümleleri çıkar ve ekle
+    logger.info("Extracting example sentences from CSV definitions...")
+    csv_examples = generate_examples_from_csv_definitions(df, expr_col, def_col)
+    logger.info(f"Extracted {len(csv_examples)} example sentences from CSV")
+    
     # Generate weak labels (şablonlu ve doğal cümleler)
     logger.info("Generating weak labels...")
     generated_df = generate_weak_labels(lexicon, use_natural_examples=True)
     
-    # ✅ Gerçek örnekleri de ekle
+    # ✅ Gerçek örnekleri ve CSV'den çıkarılan örnekleri de ekle
     real_df = pd.DataFrame(real_examples)
-    generated_df = pd.concat([generated_df, real_df], ignore_index=True)
-    logger.info(f"Total examples after adding real dataset: {len(generated_df)}")
+    csv_examples_df = pd.DataFrame(csv_examples)
+    
+    # Tüm pozitif örnekleri birleştir
+    all_positive_df = pd.concat([generated_df[generated_df['label'] == 1], 
+                                  real_df, 
+                                  csv_examples_df], ignore_index=True)
+    
+    # Negatif örnekleri ekle
+    negative_df = generated_df[generated_df['label'] == 0]
+    generated_df = pd.concat([all_positive_df, negative_df], ignore_index=True)
+    
+    logger.info(f"Total examples: {len(generated_df)} (positive: {sum(generated_df['label']==1)}, negative: {sum(generated_df['label']==0)})")
     
     # ✅ Split dataset - ÖNCE split yap, SONRA split column ekle
     logger.info("Splitting dataset...")

@@ -29,7 +29,7 @@ NUM_NEGATIVE_EXAMPLES = 5000  # ✅ Artırıldı: daha fazla veri = daha az over
 TEMPLATE_FILE = PROJECT_ROOT / "src" / "data" / "templates.txt"
 
 # Inference configuration
-DEFAULT_THRESHOLD = 0.8  # ✅ Artırıldı: 0.6 -> 0.8 (daha az false positive için)
+DEFAULT_THRESHOLD = 0.5  # ✅ Düşürüldü: 0.8 -> 0.5 (cümle içindeki deyimleri yakalamak için)
 TOKEN_WINDOW_SIZE = 5  # For n-gram matching
 
 # Output paths
