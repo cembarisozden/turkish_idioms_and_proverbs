@@ -18,7 +18,7 @@ class IdiomDetector:
                  model_path: Path = DETECTOR_MODEL_PATH,
                  lexicon_path: Optional[Path] = None,
                  threshold: float = DEFAULT_THRESHOLD,
-                 use_token_window: bool = True):  # ✅ Varsayılan True (daha iyi eşleşme için)
+                 use_token_window: bool = True):
         """Initialize detector.
         
         Args:
@@ -47,34 +47,34 @@ class IdiomDetector:
         self.model.eval()
         self.device = device
     
-def classify(self, text: str, temperature: float = 1.0) -> float:
-    """Classify text using transformer with temperature scaling.
-    
-    Args:
-        text: Input text.
-        temperature: Temperature for softmax scaling (>1.0 = softer scores).
+    def classify(self, text: str, temperature: float = 1.0) -> float:
+        """Classify text using transformer with temperature scaling.
         
-    Returns:
-        Probability score (0-1).
-    """
-    encoding = self.tokenizer(
-        text,
-        truncation=True,
-        padding='max_length',
-        max_length=MAX_LENGTH,
-        return_tensors='pt'
-    )
-    
-    input_ids = encoding['input_ids'].to(self.device)
-    attention_mask = encoding['attention_mask'].to(self.device)
-    
-    with torch.no_grad():
-        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
-        logits = outputs.logits / temperature  # ✅ Temperature scaling
-        probs = torch.softmax(logits, dim=-1)
-        score = probs[0][1].item()
-    
-    return score
+        Args:
+            text: Input text.
+            temperature: Temperature for softmax scaling (>1.0 = softer scores).
+            
+        Returns:
+            Probability score (0-1).
+        """
+        encoding = self.tokenizer(
+            text,
+            truncation=True,
+            padding='max_length',
+            max_length=MAX_LENGTH,
+            return_tensors='pt'
+        )
+        
+        input_ids = encoding['input_ids'].to(self.device)
+        attention_mask = encoding['attention_mask'].to(self.device)
+        
+        with torch.no_grad():
+            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+            logits = outputs.logits / temperature
+            probs = torch.softmax(logits, dim=-1)
+            score = probs[0][1].item()
+        
+        return score
     
     def detect(self, text: str, threshold: Optional[float] = None) -> Dict:
         """Detect idioms/proverbs in text.
@@ -90,7 +90,6 @@ def classify(self, text: str, temperature: float = 1.0) -> float:
             threshold = self.threshold
         
         # Step 1: Rule-based matching (for additional information)
-        # ✅ Token window kullanarak daha esnek eşleşme yap
         matches = self.matcher.match(
             text,
             use_token_window=self.use_token_window,
@@ -101,7 +100,6 @@ def classify(self, text: str, temperature: float = 1.0) -> float:
         classifier_score = self.classify(text)
         
         # Step 3: Final decision - Transformer skoruna göre karar ver
-        # Lexicon match varsa ek bilgi olarak göster, yoksa bile transformer yüksek skor veriyorsa deyim var
         has_idiom = classifier_score >= threshold
         
         # Format matches - Lexicon'da bulunan eşleşmeleri ek bilgi olarak göster
@@ -118,6 +116,5 @@ def classify(self, text: str, temperature: float = 1.0) -> float:
             'has_idiom': has_idiom,
             'score': classifier_score,
             'matches': formatted_matches,
-            'lexicon_found': len(matches) > 0  # Lexicon'da bulunup bulunmadığını belirt
+            'lexicon_found': len(matches) > 0
         }
-
