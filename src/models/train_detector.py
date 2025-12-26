@@ -106,8 +106,17 @@ def train_detector(train_df: pd.DataFrame,
         attention_probs_dropout_prob=0.2  # ✅ Artırıldı: 0.1 -> 0.2 (overfitting önleme)
     )
     
-    # Device
+    # ✅ GPU kontrolü ve bilgilendirme
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    is_gpu = device.type == 'cuda'
+    
+    if is_gpu:
+        logger.info(f"✅ GPU detected: {torch.cuda.get_device_name(0)}")
+        logger.info(f"   GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+        logger.info(f"   CUDA Version: {torch.version.cuda}")
+    else:
+        logger.warning("⚠️  GPU not available, using CPU (will be slow)")
+    
     logger.info(f"Using device: {device}")
     model.to(device)
     
@@ -127,12 +136,22 @@ def train_detector(train_df: pd.DataFrame,
         MAX_LENGTH
     )
     
+    # ✅ GPU için optimize edilmiş batch size
+    # GPU'da daha büyük batch size kullanabiliriz
+    effective_batch_size = BATCH_SIZE
+    if is_gpu:
+        # GPU bellek durumuna göre batch size artırılabilir
+        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        if gpu_memory_gb >= 8:  # 8GB+
+            effective_batch_size = min(BATCH_SIZE * 2, 64)  # 2x veya max 64
+            logger.info(f"   Using larger batch size for GPU: {effective_batch_size}")
+    
     # Training arguments
     training_args = TrainingArguments(
         output_dir=str(output_dir),
         num_train_epochs=NUM_EPOCHS,
-        per_device_train_batch_size=BATCH_SIZE,
-        per_device_eval_batch_size=BATCH_SIZE,
+        per_device_train_batch_size=effective_batch_size,
+        per_device_eval_batch_size=effective_batch_size,
         learning_rate=LEARNING_RATE * 0.8,  # ✅ Biraz düşürüldü: overfitting önleme
         weight_decay=0.1,  # ✅ Artırıldı: 0.01 -> 0.1 (daha güçlü regularization)
         logging_dir=str(output_dir / 'logs'),
@@ -144,11 +163,16 @@ def train_detector(train_df: pd.DataFrame,
         greater_is_better=True,
         save_total_limit=2,
         seed=RANDOM_SEED,
-        fp16=False,  # ✅ CPU'da çalışıyorsunuz, False yapın
+        # ✅ GPU için mixed precision (fp16)
+        fp16=is_gpu,  # GPU varsa True, CPU'da False
+        # ✅ GPU için pin memory (hızlı veri transferi)
+        dataloader_pin_memory=is_gpu,  # GPU varsa True
         lr_scheduler_type='cosine',  # ✅ Daha yumuşak schedule
         warmup_ratio=0.1,  # ✅ Warmup ekle (%10 warmup)
-        dataloader_pin_memory=False,  # ✅ CPU uyarısını kaldırır
         max_grad_norm=1.0,  # ✅ Gradient clipping: overfitting önleme
+        # ✅ GPU için ek optimizasyonlar
+        dataloader_num_workers=4 if is_gpu else 0,  # GPU'da paralel data loading
+        report_to=None,  # TensorBoard kullanmıyorsak kapat
     )
     
     # Trainer
@@ -166,6 +190,8 @@ def train_detector(train_df: pd.DataFrame,
     
     # Train
     logger.info("Starting training...")
+    if is_gpu:
+        logger.info("🚀 Training on GPU - Expected speedup: 50-100x faster!")
     train_result = trainer.train()
     
     # ✅ Overfitting kontrolü - train vs validation loss karşılaştırması

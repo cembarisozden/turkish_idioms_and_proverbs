@@ -24,8 +24,8 @@ VAL_SPLIT = 0.15
 TEST_SPLIT = 0.15
 
 # Weak labeling configuration
-NUM_POSITIVE_EXAMPLES = 5000  # ✅ Hızlı: ~1-2 saat eğitim, 900+ şablon çeşitlilik sağlıyor
-NUM_NEGATIVE_EXAMPLES = 5000  # ✅ Hızlı: ~1-2 saat eğitim, 900+ şablon çeşitlilik sağlıyor
+NUM_POSITIVE_EXAMPLES = 15000  # ✅ Hızlı: ~1-2 saat eğitim, 900+ şablon çeşitlilik sağlıyor
+NUM_NEGATIVE_EXAMPLES = 15000  # ✅ Hızlı: ~1-2 saat eğitim, 900+ şablon çeşitlilik sağlıyor
 TEMPLATE_FILE = PROJECT_ROOT / "src" / "data" / "templates.txt"
 
 # Inference configuration
