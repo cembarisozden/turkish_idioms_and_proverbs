@@ -47,3 +47,4 @@ Yaklaşık **4-5x daha hızlı** eğitim bekleniyor.
 
 GPU varsa çok daha hızlı olur. CUDA kuruluysa otomatik kullanılır.
 
+

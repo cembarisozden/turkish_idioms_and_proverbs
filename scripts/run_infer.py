@@ -3,16 +3,17 @@ import sys
 import argparse
 import json
 from pathlib import Path
+import logging
+
+# Tüm logları kapat
+logging.basicConfig(level=logging.CRITICAL)
+logging.getLogger().setLevel(logging.CRITICAL)
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.models.inference import IdiomDetector
 from src.config import DEFAULT_THRESHOLD
-from src.utils.logging import setup_logging
-import logging
-
-logger = setup_logging()
 
 def main():
     """Main function for inference."""
@@ -26,13 +27,10 @@ def main():
     args = parser.parse_args()
     
     # Initialize detector
-    # ✅ Varsayılan olarak token window kullan (daha iyi eşleşme için)
     use_token_window = not args.no_token_window
-    logger.info("Initializing detector...")
     detector = IdiomDetector(threshold=args.threshold, use_token_window=use_token_window)
     
     # Detect
-    logger.info(f"Analyzing text: {args.text}")
     result = detector.detect(args.text, threshold=args.threshold)
     
     # Print JSON output

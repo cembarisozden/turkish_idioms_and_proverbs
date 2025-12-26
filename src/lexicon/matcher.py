@@ -3,7 +3,7 @@ import re
 from typing import List, Dict, Tuple, Optional
 import logging
 
-from src.data.normalize_tr import normalize_turkish_text, tokenize_simple
+from src.data import normalize_tr
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class LexiconMatcher:
             List of matches with span, expression, definition.
         """
         matches = []
-        normalized_text = normalize_turkish_text(text)
+        normalized_text = normalize_tr.normalize_turkish_text(text)
         
         for expr in self.normalized_expressions:
             pattern = self.patterns[expr]
@@ -61,8 +61,8 @@ class LexiconMatcher:
         
         return matches
     
-    def token_window_match(self, text: str, window_size: int = 5) -> List[Dict]:
-        """Find matches using token window (n-gram) approach.
+    def token_window_match(self, text: str, window_size: int = 8) -> List[Dict]:
+        """Find matches using token window (n-gram) approach with partial matching.
         
         Args:
             text: Input text to search.
@@ -72,69 +72,169 @@ class LexiconMatcher:
             List of matches with span, expression, definition.
         """
         matches = []
-        tokens = tokenize_simple(text)  # ✅ tokenize_simple zaten normalize ediyor
+        tokens = normalize_tr.tokenize_simple(text)
         
-        # ✅ Tüm olası deyim uzunluklarını kontrol et
-        # Her deyim için metinde tüm pozisyonları kontrol et
         for expr in self.normalized_expressions:
-            expr_tokens = tokenize_simple(expr)
+            expr_tokens = normalize_tr.tokenize_simple(expr)
             expr_len = len(expr_tokens)
             
-            # ✅ Minimum 2 token olmalı, maksimum window_size kadar olabilir
-            # Ama window_size'dan uzun deyimler için de kontrol et (sliding window ile)
             if expr_len < 2:
                 continue
             
-            # Eğer deyim window_size'dan uzunsa, metinde yeterli yer yoksa atla
-            if expr_len > len(tokens):
-                continue
-            
-            # Metindeki tüm pozisyonlarda bu deyimi ara
-            for i in range(len(tokens) - expr_len + 1):
-                window_tokens = tokens[i:i + expr_len]
-                
-                # Token'ları eşleştir (normalize edilmiş)
-                if self._tokens_match(expr_tokens, window_tokens):
-                    # Gerçek span'ı bul
-                    span = self._find_token_span(text, i, i + expr_len)
+            # Try exact match first
+            if expr_len <= len(tokens):
+                for i in range(len(tokens) - expr_len + 1):
+                    window_tokens = tokens[i:i + expr_len]
                     
-                    if span:
-                        expr_original = self.lexicon[expr].get('original', expr)
-                        definition = self.lexicon[expr].get('definition', '')
+                    if self._tokens_match(expr_tokens, window_tokens):
+                        span = self._find_token_span(text, i, i + expr_len)
                         
-                        # Aynı deyim için zaten eşleşme varsa atla (overlap kontrolü sonra yapılacak)
-                        matches.append({
-                            'span': span,
-                            'expression': expr_original,
-                            'definition': definition,
-                            'normalized_expr': expr
-                        })
-                        break  # Bu deyim için bir eşleşme bulundu, diğer pozisyonlara bakma
+                        if span:
+                            expr_original = self.lexicon[expr].get('original', expr)
+                            definition = self.lexicon[expr].get('definition', '')
+                            
+                            matches.append({
+                                'span': span,
+                                'expression': expr_original,
+                                'definition': definition,
+                                'normalized_expr': expr
+                            })
+                            break
+            
+            # Try flexible partial match: match when expression tokens can be found in text
+            # This handles cases like "açlıktan gözü gözleri dönmek" -> "açlıktan gözü dönmüştü"
+            # Only for expressions with 3+ tokens
+            if expr_len >= 3:
+                # Try matching at least 2 consecutive tokens from expression
+                for match_start in range(expr_len - 1):
+                    for match_end in range(match_start + 2, expr_len + 1):
+                        match_len = match_end - match_start
+                        if match_len > len(tokens):
+                            break
+                        
+                        expr_subset = expr_tokens[match_start:match_end]
+                        
+                        for i in range(len(tokens) - match_len + 1):
+                            window_tokens = tokens[i:i + match_len]
+                            
+                            if self._tokens_match(expr_subset, window_tokens):
+                                # Only accept if we matched at least 2 tokens and it's a significant portion
+                                matched_ratio = match_len / expr_len
+                                if matched_ratio >= 0.5 or match_len >= 2:
+                                    span = self._find_token_span(text, i, i + match_len)
+                                    
+                                    if span:
+                                        expr_original = self.lexicon[expr].get('original', expr)
+                                        definition = self.lexicon[expr].get('definition', '')
+                                        
+                                        matches.append({
+                                            'span': span,
+                                            'expression': expr_original,
+                                            'definition': definition,
+                                            'normalized_expr': expr
+                                        })
+                                        break
+                        else:
+                            continue
+                        break
+                    else:
+                        continue
+                    break
         
-        # Remove overlapping matches
         matches = self._remove_overlaps(matches)
         
         return matches
     
-    def _tokens_match(self, expr_tokens: List[str], window_tokens: List[str]) -> bool:
-        """Check if expression tokens match window tokens.
+    def _tokens_match(self, expr_tokens: List[str], window_tokens: List[str], allow_skip: bool = False) -> bool:
+        """Check if expression tokens match window tokens using lemmatization.
         
         Args:
-            expr_tokens: Tokens from expression (normalized).
-            window_tokens: Tokens from window (normalized).
+            expr_tokens: Tokens from expression (e.g., ["abuk", "sabuk", "konuşmak"]).
+            window_tokens: Tokens from window (e.g., ["abuk", "sabuk", "konuştu"]).
+            allow_skip: If True, allow skipping some tokens (for partial matching).
             
         Returns:
-            True if tokens match.
+            True if tokens match (considering all possible lemmas).
         """
-        if len(expr_tokens) != len(window_tokens):
+        if len(expr_tokens) != len(window_tokens) and not allow_skip:
             return False
         
-        # ✅ Normalize edilmiş token'ları karşılaştır
-        # Her iki tarafı da normalize et ve karşılaştır
-        expr_normalized = [normalize_turkish_text(t) for t in expr_tokens]
-        window_normalized = [normalize_turkish_text(t) for t in window_tokens]
+        # Import fresh each time to avoid stale references
+        from src.data.normalize_tr import normalize_turkish_text, get_all_lemmas
         
-        return expr_normalized == window_normalized
+        # If lengths don't match and skip is allowed, try flexible matching
+        if allow_skip and len(expr_tokens) != len(window_tokens):
+            return self._flexible_tokens_match(expr_tokens, window_tokens)
+        
+        for expr_token, window_token in zip(expr_tokens, window_tokens):
+            expr_norm = normalize_turkish_text(expr_token)
+            window_norm = normalize_turkish_text(window_token)
+            
+            if expr_norm == window_norm:
+                continue
+            
+            expr_lemmas = set(get_all_lemmas(expr_norm))
+            window_lemmas = set(get_all_lemmas(window_norm))
+            
+            if not expr_lemmas.intersection(window_lemmas):
+                return False
+        
+        return True
+    
+    def _flexible_tokens_match(self, expr_tokens: List[str], window_tokens: List[str]) -> bool:
+        """Flexible token matching allowing some tokens to be skipped.
+        
+        Args:
+            expr_tokens: Tokens from expression.
+            window_tokens: Tokens from window.
+            
+        Returns:
+            True if at least 70% of tokens match.
+        """
+        from src.data.normalize_tr import normalize_turkish_text, get_all_lemmas
+        
+        matches = 0
+        expr_idx = 0
+        window_idx = 0
+        
+        while expr_idx < len(expr_tokens) and window_idx < len(window_tokens):
+            expr_token = expr_tokens[expr_idx]
+            window_token = window_tokens[window_idx]
+            
+            expr_norm = normalize_turkish_text(expr_token)
+            window_norm = normalize_turkish_text(window_token)
+            
+            if expr_norm == window_norm:
+                matches += 1
+                expr_idx += 1
+                window_idx += 1
+            else:
+                expr_lemmas = set(get_all_lemmas(expr_norm))
+                window_lemmas = set(get_all_lemmas(window_norm))
+                
+                if expr_lemmas.intersection(window_lemmas):
+                    matches += 1
+                    expr_idx += 1
+                    window_idx += 1
+                else:
+                    # Try skipping one token from either side
+                    if expr_idx + 1 < len(expr_tokens):
+                        next_expr_norm = normalize_turkish_text(expr_tokens[expr_idx + 1])
+                        if next_expr_norm == window_norm:
+                            expr_idx += 1
+                            continue
+                    if window_idx + 1 < len(window_tokens):
+                        next_window_norm = normalize_turkish_text(window_tokens[window_idx + 1])
+                        if expr_norm == next_window_norm:
+                            window_idx += 1
+                            continue
+                    # No match, advance both
+                    expr_idx += 1
+                    window_idx += 1
+        
+        # At least 70% of tokens must match
+        min_matches = max(2, int(len(expr_tokens) * 0.7))
+        return matches >= min_matches
     
     def _find_token_span(self, text: str, start_token_idx: int, end_token_idx: int) -> Optional[List[int]]:
         """Find character span for token indices.
@@ -147,7 +247,7 @@ class LexiconMatcher:
         Returns:
             [start_char, end_char] or None.
         """
-        tokens = tokenize_simple(text)
+        tokens = normalize_tr.tokenize_simple(text)
         if end_token_idx > len(tokens):
             return None
         

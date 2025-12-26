@@ -13,7 +13,7 @@ MODEL_NAME = "dbmdz/bert-base-turkish-cased"
 MAX_LENGTH = 64  # Reduced from 128 for faster training
 BATCH_SIZE = 32  # Increased from 16 for faster training
 LEARNING_RATE = 2e-5
-NUM_EPOCHS = 2  # Reduced from 3 for faster training
+NUM_EPOCHS = 2  # ✅ Hızlı: 3 -> 2 (yeterli öğrenme)
 EARLY_STOPPING_PATIENCE = 3  # ✅ Artırıldı: daha erken durma (overfitting önleme)
 EARLY_STOPPING_THRESHOLD = 0.0001  # ✅ Düşürüldü: daha hassas durma
 
@@ -24,8 +24,8 @@ VAL_SPLIT = 0.15
 TEST_SPLIT = 0.15
 
 # Weak labeling configuration
-NUM_POSITIVE_EXAMPLES = 5000  # ✅ Artırıldı: daha fazla veri = daha az overfitting
-NUM_NEGATIVE_EXAMPLES = 5000  # ✅ Artırıldı: daha fazla veri = daha az overfitting
+NUM_POSITIVE_EXAMPLES = 5000  # ✅ Hızlı: ~1-2 saat eğitim, 900+ şablon çeşitlilik sağlıyor
+NUM_NEGATIVE_EXAMPLES = 5000  # ✅ Hızlı: ~1-2 saat eğitim, 900+ şablon çeşitlilik sağlıyor
 TEMPLATE_FILE = PROJECT_ROOT / "src" / "data" / "templates.txt"
 
 # Inference configuration

@@ -35,17 +35,14 @@ class IdiomDetector:
             from src.config import LEXICON_PATH
             lexicon_path = LEXICON_PATH
         
-        logger.info(f"Loading lexicon from {lexicon_path}")
         lexicon = load_json(lexicon_path)
         self.matcher = LexiconMatcher(lexicon)
         
         # Load transformer model
-        logger.info(f"Loading model from {model_path}")
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_path)
         
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        logger.info(f"Using device: {device}")
         self.model.to(device)
         self.model.eval()
         self.device = device
