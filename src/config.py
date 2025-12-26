@@ -30,6 +30,7 @@ TEMPLATE_FILE = PROJECT_ROOT / "src" / "data" / "templates.txt"
 
 # Inference configuration
 DEFAULT_THRESHOLD = 0.5  # ✅ Düşürüldü: 0.8 -> 0.5 (cümle içindeki deyimleri yakalamak için)
+TEMPERATURE = 2.0  # ✅ Skorları yumuşatmak için (1.0 = normal, >1.0 = daha yumuşak)
 TOKEN_WINDOW_SIZE = 5  # For n-gram matching
 
 # Output paths

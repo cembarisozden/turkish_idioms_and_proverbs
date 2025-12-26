@@ -47,33 +47,34 @@ class IdiomDetector:
         self.model.eval()
         self.device = device
     
-    def classify(self, text: str) -> float:
-        """Classify text using transformer (returns probability of idiom presence).
+def classify(self, text: str, temperature: float = 1.0) -> float:
+    """Classify text using transformer with temperature scaling.
+    
+    Args:
+        text: Input text.
+        temperature: Temperature for softmax scaling (>1.0 = softer scores).
         
-        Args:
-            text: Input text.
-            
-        Returns:
-            Probability score (0-1).
-        """
-        encoding = self.tokenizer(
-            text,
-            truncation=True,
-            padding='max_length',
-            max_length=MAX_LENGTH,
-            return_tensors='pt'
-        )
-        
-        input_ids = encoding['input_ids'].to(self.device)
-        attention_mask = encoding['attention_mask'].to(self.device)
-        
-        with torch.no_grad():
-            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
-            probs = torch.softmax(outputs.logits, dim=-1)
-            # Return probability of class 1 (idiom present)
-            score = probs[0][1].item()
-        
-        return score
+    Returns:
+        Probability score (0-1).
+    """
+    encoding = self.tokenizer(
+        text,
+        truncation=True,
+        padding='max_length',
+        max_length=MAX_LENGTH,
+        return_tensors='pt'
+    )
+    
+    input_ids = encoding['input_ids'].to(self.device)
+    attention_mask = encoding['attention_mask'].to(self.device)
+    
+    with torch.no_grad():
+        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+        logits = outputs.logits / temperature  # ✅ Temperature scaling
+        probs = torch.softmax(logits, dim=-1)
+        score = probs[0][1].item()
+    
+    return score
     
     def detect(self, text: str, threshold: Optional[float] = None) -> Dict:
         """Detect idioms/proverbs in text.
